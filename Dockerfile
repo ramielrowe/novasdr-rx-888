@@ -164,6 +164,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=sddc-builder /usr/local/lib/libSoapySDR* /usr/local/lib/
 COPY --from=sddc-builder /usr/local/lib/SoapySDR/ /usr/local/lib/SoapySDR/
 COPY --from=sddc-builder /usr/local/bin/SoapySDRUtil /usr/local/bin/
+
+# sddc-cli is a diagnostic, not part of the runtime path. It drives the SDDC
+# core directly -- AttachIQ() + Start(true), the same core streaming path the
+# Soapy module uses -- but WITHOUT the SoapySDDC wrapper. That makes it the
+# discriminator when streaming segfaults: if sddc-cli streams cleanly the bug
+# is in SoapySDDC's buffer/callback layer, and if it crashes too the bug is in
+# SDDC Core. ~540 KB.
+COPY --from=sddc-builder /src/build/sddc-cli/sddc-cli /usr/local/bin/
 RUN ldconfig
 
 WORKDIR /app
