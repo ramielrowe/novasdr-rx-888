@@ -1,0 +1,119 @@
+diff --git a/Core/usb/FX3handler.cpp b/Core/usb/FX3handler.cpp
+index 0cad431..de369a4 100644
+--- a/Core/usb/FX3handler.cpp
++++ b/Core/usb/FX3handler.cpp
+@@ -112,7 +112,16 @@ void fx3handler::StartStream(ringbuffer<int16_t> &samples_buf)
+ 
+     inputbuffer = &samples_buf;
+ 
+-    dev.streaming_open_async(inputbuffer->getBlockSize() * sizeof(int16_t), concurrentTransfers, PacketRead, this);
++    if (dev.streaming_open_async(inputbuffer->getBlockSize() * sizeof(int16_t),
++                                 concurrentTransfers, PacketRead, this) < 0)
++    {
++        /* The return value used to be discarded, so streaming_start() ran
++           anyway against uninitialised streaming state and segfaulted -- the
++           condition the FIXME below described. Report and stay stopped. */
++        ErrorPrintln(TAG, "streaming_open_async failed; stream not started");
++        streamRunning = false;
++        return;
++    }
+     //samples_buf.setBlockSize(dev.streaming_framesize() / sizeof(int16_t));
+ 
+     DebugPrintln(TAG, "Samples buffer blocksize: %d", samples_buf.getBlockSize());
+@@ -120,7 +129,6 @@ void fx3handler::StartStream(ringbuffer<int16_t> &samples_buf)
+     // Start background thread to poll the events
+     streamRunning = true;
+ 
+-    // FIXME: Will crash if streaming hasn't properly started
+     dev.streaming_start();
+ 
+     poll_thread = std::thread(
+diff --git a/Core/usb/streaming.cpp b/Core/usb/streaming.cpp
+index c90fd50..ec73165 100644
+--- a/Core/usb/streaming.cpp
++++ b/Core/usb/streaming.cpp
+@@ -99,12 +99,34 @@ int USBDevice::streaming_open_async(uint32_t frame_size,
+     return -1;
+   }
+ 
+-  /* allocate frames for zerocopy USB bulk transfers */
++  /* Allocate frames for USB bulk transfers.
++
++     libusb_dev_mem_alloc() is a zerocopy DMA optimisation, not a requirement:
++     on Linux it mmaps usbfs via USBDEVFS_ALLOC_MEMORY, which is unavailable in
++     a number of ordinary environments (containers among them) and then returns
++     NULL. Previously that NULL failed streaming_open_async(), whose return
++     value FX3handler::StartStream() ignores, so the next call --
++     streaming_start() -- ran against uninitialised streaming state and
++     segfaulted. Falling back to malloc() costs a copy per transfer and keeps
++     the device working. */
++  #ifdef __linux__
++  transfer_buffers_are_dev_mem = true;
++  #else
++  transfer_buffers_are_dev_mem = false;
++  #endif
++
+   for (uint32_t i = 0; i < num_frames; ++i) {
+     #ifdef __linux__
+-    transfer_buffers[i] = libusb_dev_mem_alloc(dev_handle, frame_size);
+-    #elif defined(__APPLE__)
+-    transfer_buffers[i] = (uint8_t *) malloc(frame_size);
++    if (transfer_buffers_are_dev_mem) {
++      transfer_buffers[i] = libusb_dev_mem_alloc(dev_handle, frame_size);
++      if (transfer_buffers[i] == 0 && i == 0) {
++        fprintf(stderr, "WARNING: libusb_dev_mem_alloc() unavailable, "
++                        "falling back to malloc() for USB transfer buffers\n");
++        transfer_buffers_are_dev_mem = false;
++      }
++    }
++    if (!transfer_buffers_are_dev_mem)
++      transfer_buffers[i] = (uint8_t *) malloc(frame_size);
+     #else
+     transfer_buffers[i] = (uint8_t *) malloc(frame_size);
+     #endif
+@@ -113,11 +135,12 @@ int USBDevice::streaming_open_async(uint32_t frame_size,
+       ErrorPrintln(TAG, "Failed to allocate streaming buffer");
+       for (uint32_t j = 0; j < i; j++) {
+         #ifdef __linux__
+-        libusb_dev_mem_free(dev_handle, transfer_buffers[j], frame_size);
+-        #elif defined(__APPLE__)
+-        free(transfer_buffers[j]);
++        if (transfer_buffers_are_dev_mem)
++          libusb_dev_mem_free(dev_handle, transfer_buffers[j], frame_size);
++        else
++          free(transfer_buffers[j]);
+         #else
+-        free(transfer_buffers[i]);
++        free(transfer_buffers[j]);
+         #endif
+       }
+       return -1;
+@@ -168,10 +191,10 @@ void USBDevice::streaming_close()
+   for(auto it = transfer_buffers.begin(); it != transfer_buffers.end();)
+   {
+     #ifdef __linux__
+-    libusb_dev_mem_free(dev_handle, *it,
+-                        streaming_obj->frame_size);
+-    #elif defined(__APPLE__)
+-    free(*it);
++    if (transfer_buffers_are_dev_mem)
++      libusb_dev_mem_free(dev_handle, *it, streaming_obj->frame_size);
++    else
++      free(*it);
+     #else
+     free(*it);
+     #endif
+diff --git a/Core/usb/usb_device.h b/Core/usb/usb_device.h
+index 02a15c1..734c27b 100644
+--- a/Core/usb/usb_device.h
++++ b/Core/usb/usb_device.h
+@@ -102,6 +102,9 @@ class USBDevice
+     uint32_t concurrent_transfers;
+     std::vector<struct libusb_transfer*> transfers;
+     std::vector<uint8_t*> transfer_buffers;
++    /* true when transfer_buffers came from libusb_dev_mem_alloc(), false
++       when they came from malloc(). The free path must match. */
++    bool transfer_buffers_are_dev_mem = false;
+     streaming_t *streaming_obj = nullptr;
+ 
+     StreamingStatus streaming_status;
