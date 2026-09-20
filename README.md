@@ -160,8 +160,17 @@ the `ghcr.io/ramielrowe/novasdr:git-45b2951` image this work started from.
 
 ## Status / caveats
 
-- **Not yet built end-to-end here.** The Docker build is long (Rust + SoapySDR
-  + SDDC + frontend); CI is the first real exercise of it.
+- **Built end-to-end and smoke-tested — on `linux/arm64` only.** The image is
+  188 MB; `SoapySDRUtil --info` reports
+  `Module found: .../libSDDCSupport.so (1.0.1-6ad4e9b)` and
+  `Available factories... SDDC`; `novasdr-server` starts, loads the shipped
+  config, derives `is_real=false basefreq=2000000 total_bandwidth=4000000`,
+  and listens on 9002. **x86-64 is unproven here** — every build failure fixed
+  so far was architecture-independent, but SDDC takes its Neon paths on arm64
+  and its AVX paths on a GitHub runner, so CI is the first exercise of those.
+- **Not yet run against the radio.** The smoke test had no RX-888 attached, so
+  device open, streaming and the `index=0`/`cf32` pairing are still unverified
+  against hardware. `make probe` on the node holding the radio is the next step.
 - **The SDDC Soapy module is third-party and of varying maturity.** Upstream
   SoapySDR has no RX-888 driver ([pothosware/SoapySDR#386](https://github.com/pothosware/SoapySDR/issues/386)).
   `makeSDDC` carries the comment *"I don't know how it works, but here I need
