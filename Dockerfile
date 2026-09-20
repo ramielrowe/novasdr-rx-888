@@ -8,15 +8,20 @@
 # (driver key "SDDC") so novasdr-server can open the radio natively through
 # its own `soapysdr` input driver -- one process, no FIFO, no sidecar.
 #
+# Everything is built on ONE Debian release (trixie): SDDC sets CMAKE_CXX_STANDARD 20
+# and includes <format>, which bookworm's GCC 12 does not implement (GCC 13+ only),
+# and keeping the Rust stage on the same release avoids libstdc++/glibc skew
+# between novasdr-server and the Soapy module it dlopens.
+#
 # SoapySDR is built ONCE from source and shared by both the SDDC module and
 # the Rust build. That is deliberate: a Soapy module must match the ABI of the
 # libSoapySDR it is loaded into, and mixing a distro libsoapysdr-dev with a
 # source build is the classic way to get a module that silently never loads.
 
-ARG DEBIAN_VERSION=bookworm
+ARG DEBIAN_VERSION=trixie
 ARG SOAPYSDR_TAG=soapy-sdr-0.8.1
-ARG RUST_IMAGE=rustlang/rust:nightly-bookworm-slim
-ARG NODE_IMAGE=node:20-slim
+ARG RUST_IMAGE=rustlang/rust:nightly-trixie-slim
+ARG NODE_IMAGE=node:20-trixie-slim
 
 # ---------------------------------------------------------------------------
 # Stage 1: FX3 firmware
@@ -33,12 +38,22 @@ ARG NODE_IMAGE=node:20-slim
 # that have NOT pre-loaded firmware (04b4:00f3).
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_VERSION}-slim AS fx3-firmware
+# libnewlib-arm-none-eabi is REQUIRED and easy to miss. On Debian,
+# gcc-arm-none-eabi ships no bare-metal C library, so the Cypress SDK headers
+# die with "fatal error: stdlib.h: No such file or directory". SDDC's own CI
+# never hits this because it runs on Ubuntu, where newlib arrives as a
+# dependency of gcc-arm-none-eabi. talos-rx-888's Dockerfile installs both.
+#
+# gcc + libc6-dev are the NATIVE toolchain, not a duplicate of the ARM one:
+# the makefile's last step builds `elf2img`, a host-side utility that converts
+# the linked .elf into the .img the loader uploads.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      gcc-arm-none-eabi make ca-certificates \
+      gcc-arm-none-eabi libnewlib-arm-none-eabi \
+      gcc libc6-dev make ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY vendor/SDDC_Driver/ ./
-RUN make -C ./SDDC_FX3 && test -s ./SDDC_FX3/SDDC_FX3.img
+RUN make -C ./SDDC_FX3 all && test -s ./SDDC_FX3/SDDC_FX3.img
 
 # ---------------------------------------------------------------------------
 # Stage 2: SoapySDR core, from source, into /usr/local
@@ -71,12 +86,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY vendor/SDDC_Driver/ ./
 COPY --from=fx3-firmware /src/SDDC_FX3/SDDC_FX3.img ./SDDC_FX3.img
+
+# CMakeLists.txt:7 calls CheckGitSetup(), which shells out to `git log` and
+# `git describe`. A submodule checked out into a build context has no usable
+# .git, so GIT_HASH comes back EMPTY and CheckGitWrite() is then invoked with
+# zero arguments -- a hard CMake configure error, not a skipped version string.
+# Re-establish a throwaway repo so the version probe has something to read.
+# SDDC_REV is passed in for provenance so the baked-in version is traceable to
+# the real submodule commit rather than to this synthetic one.
+ARG SDDC_REV=vendored
+RUN git init -q . \
+    && git config user.email build@localhost \
+    && git config user.name  build \
+    && git add -A \
+    && git commit -q -m "vendored SDDC_Driver ${SDDC_REV}" \
+    && git tag -a "v${SDDC_REV}" -m "vendored"
+
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build \
-    && ldconfig \
-    && find /usr/local/lib -name 'libSDDCSupport*' -print | grep -q . \
-       || (echo 'FATAL: SDDC Soapy module was not built -- find_package(SoapySDR) missed' >&2; exit 1)
+    && ldconfig
+
+# Deliberately a SEPARATE RUN. Chained onto the build with `&& ... ||`, this
+# message fires for any failure in the chain and misattributes a plain compile
+# or configure error to a missing SoapySDR.
+RUN find /usr/local/lib -name 'libSDDCSupport*' -print | grep -q . \
+    || { echo 'FATAL: SoapySDDC module missing. find_package(SoapySDR CONFIG) in SoapySDDC/CMakeLists.txt did not find SoapySDR, so the module was silently skipped.' >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Stage 4: NovaSDR frontend
