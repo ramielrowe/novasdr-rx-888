@@ -1,0 +1,6 @@
+[submodule "vendor/NovaSDR"]
+	path = vendor/NovaSDR
+	url = https://github.com/ramielrowe/NovaSDR.git
+[submodule "vendor/SDDC_Driver"]
+	path = vendor/SDDC_Driver
+	url = https://github.com/renardspark/SDDC_Driver.git

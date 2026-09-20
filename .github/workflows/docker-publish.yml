@@ -1,0 +1,86 @@
+name: build & publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          # recursive matters: NovaSDR has its own `frontend` submodule, and
+          # without it the frontend build stage fails on a missing package.json.
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Record pinned submodule revisions
+        run: git submodule status
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Pull requests build but do not publish, so a fork PR cannot push a
+      # package. Login is skipped entirely on PRs.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # metadata-action lowercases the repository for us.
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=git-,format=short
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The Rust + SoapySDR + SDDC + frontend build is long; without a
+          # cache every run pays full price.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### Published"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,34 @@
+{
+  "receivers": [
+    {
+      "id": "rx888",
+      "name": "RX-888 mk2",
+      "enabled": true,
+      "input": {
+        "sps": 4000000,
+        "frequency": 4000000,
+        "signal": "iq",
+        "fft_size": 131072,
+        "audio_sps": 12000,
+        "waterfall_size": 1024,
+        "waterfall_compression": "zstd",
+        "audio_compression": "opus",
+        "accelerator": "none",
+        "smeter_offset": 0,
+        "driver": {
+          "kind": "soapysdr",
+          "device": "driver=SDDC,index=0",
+          "channel": 0,
+          "format": "cf32",
+          "settings": {},
+          "stream_args": {}
+        },
+        "defaults": {
+          "frequency": -1,
+          "modulation": "USB",
+          "squelch_enabled": false
+        }
+      }
+    }
+  ]
+}
