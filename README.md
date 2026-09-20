@@ -120,8 +120,11 @@ image convention), branch/PR refs, and semver on tags. Pull requests build but
 never push, and never log in. No secret setup is needed beyond the automatic
 `GITHUB_TOKEN`; the job requests `packages: write`.
 
-The package is private on first publish — make it public, or add a pull
-secret, in the repo's *Packages* settings.
+A GHCR package is private on first publish. This one has been made public —
+`ghcr.io/ramielrowe/novasdr-rx-888:git-a634872` pulls anonymously — so
+`deploy/kubernetes.yaml` needs no `imagePullSecret`. If you republish under a
+different owner, either make the package public in the repo's *Packages*
+settings or add a pull secret to the Deployment.
 
 Checkout uses `submodules: recursive` because NovaSDR has its own `frontend`
 submodule; without it the frontend stage fails on a missing `package.json`.
@@ -160,14 +163,16 @@ the `ghcr.io/ramielrowe/novasdr:git-45b2951` image this work started from.
 
 ## Status / caveats
 
-- **Built end-to-end and smoke-tested — on `linux/arm64` only.** The image is
-  188 MB; `SoapySDRUtil --info` reports
-  `Module found: .../libSDDCSupport.so (1.0.1-6ad4e9b)` and
+- **Builds on both architectures.** CI publishes `linux/amd64` (first green
+  build: `ghcr.io/ramielrowe/novasdr-rx-888:git-a634872`, 42 MB compressed),
+  and the same tree builds locally on `linux/arm64`. That matters because SDDC
+  takes its AVX paths on a GitHub runner and its Neon paths on arm64.
+- **Smoke-tested, on arm64.** The local image is 188 MB; `SoapySDRUtil --info`
+  reports `Module found: .../libSDDCSupport.so (1.0.1-6ad4e9b)` and
   `Available factories... SDDC`; `novasdr-server` starts, loads the shipped
   config, derives `is_real=false basefreq=2000000 total_bandwidth=4000000`,
-  and listens on 9002. **x86-64 is unproven here** — every build failure fixed
-  so far was architecture-independent, but SDDC takes its Neon paths on arm64
-  and its AVX paths on a GitHub runner, so CI is the first exercise of those.
+  and listens on 9002. The published amd64 image passed the same in-build
+  assertion but has not been run by hand.
 - **Not yet run against the radio.** The smoke test had no RX-888 attached, so
   device open, streaming and the `index=0`/`cf32` pairing are still unverified
   against hardware. `make probe` on the node holding the radio is the next step.
