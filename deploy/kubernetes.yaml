@@ -48,6 +48,42 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # NovaSDR treats /app/config as a WRITABLE STATE DIRECTORY, not a
+        # read-only config mount, so the ConfigMap cannot be mounted there.
+        # Two separate writes happen before it ever opens the radio:
+        #
+        #   1. novasdr-core load_from_files() -> migrate_global_config_json()
+        #      adds websdr.public_port when absent and persists the migrated
+        #      file back over config.json.
+        #   2. novasdr-server ensure_default_overlays() does create_dir_all on
+        #      /app/config/overlays and then write_json_if_missing for
+        #      markers.json, bands.json and header_panel.json.
+        #
+        # On a ConfigMap mount both fail with EROFS and the process exits.
+        # Seeding an emptyDir covers every such write, present and future,
+        # rather than chasing each new file NovaSDR decides to create.
+        #
+        # Consequence: anything NovaSDR writes under /app/config is EPHEMERAL
+        # and is re-seeded from the ConfigMap on every pod start. Edit the
+        # ConfigMap, not the running container. Overlay edits made through the
+        # UI do not survive a restart -- that needs a PVC here instead.
+        - name: seed-config
+          image: ghcr.io/ramielrowe/novasdr-rx-888:git-a634872
+          command:
+            - sh
+            - -c
+            - cp /config-src/config.json /config-src/receivers.json /app/config/
+          volumeMounts:
+            - name: config-src
+              mountPath: /config-src
+              readOnly: true
+            - name: config
+              mountPath: /app/config
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
       containers:
         - name: novasdr
           # Pinned to an immutable CI tag, not :latest. The device count is 1,
@@ -76,9 +112,9 @@ spec:
               cpu: "2"
               memory: 1Gi
           volumeMounts:
+            # Writable by design -- see the seed-config initContainer above.
             - name: config
               mountPath: /app/config
-              readOnly: true
             - name: data
               mountPath: /app/data
             - name: logs
@@ -93,9 +129,13 @@ spec:
             capabilities:
               drop: ["ALL"]
       volumes:
-        - name: config
+        # The ConfigMap is the source of truth; it is never mounted at
+        # /app/config, only copied from.
+        - name: config-src
           configMap:
             name: novasdr-config
+        - name: config
+          emptyDir: {}
         - name: data
           emptyDir: {}
         - name: logs
@@ -139,6 +179,7 @@ data:
         "antenna": "",
         "grid_locator": "-",
         "hostname": "",
+        "public_port": null,
         "operator": "",
         "email": "",
         "callsign_lookup_url": "https://www.qrz.com/db/",

@@ -176,6 +176,23 @@ the `ghcr.io/ramielrowe/novasdr:git-45b2951` image this work started from.
 - **Not yet run against the radio.** The smoke test had no RX-888 attached, so
   device open, streaming and the `index=0`/`cf32` pairing are still unverified
   against hardware. `make probe` on the node holding the radio is the next step.
+- **With no device present, `novasdr-server` SEGFAULTS — it does not error
+  cleanly.** Reproduced on both `linux/amd64` (published image) and
+  `linux/arm64` (local build), exit 139 in both cases, at the same point:
+  immediately after `server listening bind=[::]:9002` and
+  `DSP thread started`, i.e. in the device-open path. This is consistent with
+  `makeSDDC` doing `new SoapySDDC(stoul(args.at("index")))` against an empty
+  device list. In Kubernetes that means a missing or un-firmwared radio gives
+  **CrashLoopBackOff**, not a readable error — loud, at least, unlike the
+  device plugin's silent count of 0. Unverified whether it is stable when the
+  device *is* present.
+- **`/app/config` must be writable — never mount a ConfigMap there.** NovaSDR
+  writes to it twice before opening the radio: `migrate_global_config_json()`
+  persists a migrated `config.json`, and `ensure_default_overlays()` creates
+  `overlays/` plus `markers.json`, `bands.json` and `header_panel.json`. Both
+  fail with EROFS on a ConfigMap mount and the process exits.
+  `deploy/kubernetes.yaml` seeds an `emptyDir` from the ConfigMap with an
+  initContainer; anything NovaSDR writes there is ephemeral.
 - **The SDDC Soapy module is third-party and of varying maturity.** Upstream
   SoapySDR has no RX-888 driver ([pothosware/SoapySDR#386](https://github.com/pothosware/SoapySDR/issues/386)).
   `makeSDDC` carries the comment *"I don't know how it works, but here I need
