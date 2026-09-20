@@ -197,11 +197,11 @@ data:
       "receivers": [
         {
           "id": "rx888",
-          "name": "RX-888 mk2",
+          "name": "RX-888 mk2 (VHF/UHF)",
           "enabled": true,
           "input": {
-            "sps": 4000000,
-            "frequency": 4000000,
+            "sps": 8000000,
+            "frequency": 146000000,
             "signal": "iq",
             "fft_size": 131072,
             "audio_sps": 12000,
@@ -214,13 +214,18 @@ data:
               "kind": "soapysdr",
               "device": "driver=SDDC,index=0",
               "channel": 0,
+              "antenna": "VHF",
               "format": "cf32",
+              "gains": {
+                "RF": 25.4,
+                "IF": 14.9
+              },
               "settings": {},
               "stream_args": {}
             },
             "defaults": {
-              "frequency": -1,
-              "modulation": "USB",
+              "frequency": 146520000,
+              "modulation": "FM",
               "squelch_enabled": false
             }
           }

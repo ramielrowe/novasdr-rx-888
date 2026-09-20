@@ -83,12 +83,13 @@ in production.
 
 ## Configuration
 
-`config/receivers.json` ships a working RX-888 receiver:
+`config/receivers.json` ships a VHF/UHF receiver on the `V` port at 146 MHz:
 
 ```json
 "driver": {
   "kind": "soapysdr",
   "device": "driver=SDDC,index=0",
+  "antenna": "VHF",
   "format": "cf32"
 }
 ```
@@ -103,13 +104,49 @@ Two values are not free choices:
   and throws on everything else. Because the SDDC core converts real ADC
   samples to complex, `signal` is `"iq"`, not `"real"`.
 
-`sps` and `frequency` *are* free choices, and the shipped `4000000` / `4000000`
-is a conservative default, not a recommendation. Get the legal sample rates for
-your hardware from `make probe` (`SoapySDRUtil --probe`) and set `sps` to one of
-them. Since `signal: "iq"`, the visible spectrum is `frequency ± sps/2`.
+### HF vs VHF/UHF — which antenna port you get
 
-Per-device gain and the SDDC ADC-frequency knob go in `driver.gains` and
-`driver.settings`; `--probe` lists the exact key names.
+The shipped config targets the **VHF/UHF port (`V`)** at 146 MHz. The RX-888
+has two front ends and the driver picks between them:
+
+- **HF (`H` port)** — direct ADC sampling, roughly 10 kHz to ~32 MHz.
+- **VHF/UHF (`V` port)** — an R828D tuner downconverting to a **4.57 MHz IF**
+  (`R828D_IF_CARRIER`), which the ADC then samples. `setAntenna("VHF")`
+  attenuates the HF path, flips the GPIO to the V port and initialises the
+  tuner.
+
+**`antenna` alone does not decide the mode.** `SoapySDDC::setFrequency` calls
+`SetRFMode(GetBestRFMode(frequency))` on every tune, and `GetBestRFMode`
+returns VHF when `frequency >= ADC_rate / 2`, HF otherwise — so the *frequency*
+wins, and NovaSDR sets antenna first and frequency last. Setting
+`antenna: "VHF"` is still worth doing (it is applied, and it is documentation),
+but tuning to 146 MHz is what actually selects the V port.
+
+**`sps` has a hard floor in VHF mode.** `setSampleRate(rate)` calls
+`SetADCSampleRate(rate * 2)`, so the Soapy rate is *half* the ADC rate, and the
+tuner's 4.57 MHz IF has to fit inside it — the driver normalises the offset as
+`4.57e6 / sps`. An `sps` at or below 4.57 MHz puts the IF outside the band. The
+old HF default of `4000000` is therefore **wrong for VHF**, which is why this
+config uses `8000000` (ADC 16 MHz, 142–150 MHz visible — 2 m with margin).
+`ADC_SAMPLE_RATE_MAX` is 130 MHz on the mk2, so the Soapy ceiling is 65 MHz,
+but CF32 at high rates is a lot of bytes per second.
+
+For HF instead: `antenna: "HF"`, an `sps` you have confirmed, and a `frequency`
+below `sps` so `GetBestRFMode` picks HF.
+
+### Gain
+
+`driver.gains` takes `RF` and `IF` (`SoapySDDC::listGains`). On the mk2 in VHF
+mode the step tables are `RF` **0 – 49.6 dB** and `IF` **−4.7 – 40.8 dB**
+(`RX888R2Radio::rf_steps_vhf` / `if_steps_vhf`). The shipped `25.4` / `14.9`
+are real table entries and a mid-scale starting point — **not** a tuned
+recommendation. Raise for weak signals, lower if strong locals overload.
+`driver.settings` carries the rest (`SetBiasT_VHF` for a mast preamp, dither,
+PGA); `make probe` lists the exact keys and the ranges your unit reports.
+
+Since `signal: "iq"`, the visible spectrum is `frequency ± sps/2`. NovaSDR only
+shows band-plan entries inside that window, so an HF-tuned receiver displays
+only HF bands. The default band plan does include 6 M, 4 M, 2 M and 70 CM.
 
 ## Publishing
 
