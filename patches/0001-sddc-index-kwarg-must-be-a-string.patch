@@ -1,0 +1,30 @@
+diff --git a/SoapySDDC/Registration.cpp b/SoapySDDC/Registration.cpp
+index a20b906..5147030 100644
+--- a/SoapySDDC/Registration.cpp
++++ b/SoapySDDC/Registration.cpp
+@@ -18,7 +18,7 @@ SoapySDR::KwargsList findSDDC(const SoapySDR::Kwargs&)
+     for(auto sddc_device: device_list)
+     {
+         SoapySDR::Kwargs soapy_device;
+-        soapy_device["index"] = count;
++        soapy_device["index"] = std::to_string(count);
+         soapy_device["label"] = string(sddc_device.product);
+         soapy_device["serial"] = string(sddc_device.serial_number);
+         results.push_back(soapy_device);
+
+--
+SoapySDR::Kwargs is std::map<std::string, std::string>. Assigning the int
+`count` to the mapped std::string selects operator=(char), so index 0 becomes a
+one-character string containing '\0' rather than "0". SoapySDR merges the
+enumeration args into the args handed to makeSDDC, which does
+stoul(args.at("index")) -- and stoul("\0") throws std::invalid_argument.
+
+Observed as, with the radio present and enumerating correctly:
+
+  ERROR novasdr_server::dsp_runner: DSP loop terminated error=open SoapySDR device
+  Caused by:
+      Other: stoul
+
+This makes the driver unopenable through the normal SoapySDR::Device::make
+path regardless of what the caller passes as `index`, since the enumeration
+value wins the merge. Reported upstream: renardspark/SDDC_Driver.

@@ -87,6 +87,16 @@ WORKDIR /src
 COPY vendor/SDDC_Driver/ ./
 COPY --from=fx3-firmware /src/SDDC_FX3/SDDC_FX3.img ./SDDC_FX3.img
 
+# Local fixes to the vendored driver, applied BEFORE the throwaway git init
+# below so they are not mistaken for upstream history. `git apply` exits
+# non-zero if a patch stops applying after a submodule bump, which is the
+# behaviour we want: a silently dropped patch here means a radio that
+# enumerates but cannot be opened.
+COPY patches/ /patches/
+RUN set -e; for p in /patches/*.patch; do \
+      echo "applying $p"; git apply --verbose "$p"; \
+    done
+
 # CMakeLists.txt:7 calls CheckGitSetup(), which shells out to `git log` and
 # `git describe`. A submodule checked out into a build context has no usable
 # .git, so GIT_HASH comes back EMPTY and CheckGitWrite() is then invoked with

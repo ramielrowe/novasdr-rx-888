@@ -37,6 +37,7 @@ scripts/build.sh               local docker build with submodule preflight
 scripts/probe-device.sh        SoapySDRUtil --find/--probe against the real radio
 vendor/NovaSDR                 submodule (pinned)
 vendor/SDDC_Driver             submodule (pinned)
+patches/                       local fixes applied to the driver at build time
 .github/workflows/             build + publish to ghcr.io/<owner>/<repo>
 ```
 
@@ -147,6 +148,33 @@ PGA); `make probe` lists the exact keys and the ranges your unit reports.
 Since `signal: "iq"`, the visible spectrum is `frequency ± sps/2`. NovaSDR only
 shows band-plan entries inside that window, so an HF-tuned receiver displays
 only HF bands. The default band plan does include 6 M, 4 M, 2 M and 70 CM.
+
+## Patches to the vendored driver
+
+`patches/` holds local fixes applied to `vendor/SDDC_Driver` during the build,
+before CMake runs. `git apply` exits non-zero if one stops applying after a
+submodule bump, so a dropped patch fails the build rather than silently
+shipping a broken driver.
+
+**`0001-sddc-index-kwarg-must-be-a-string.patch`** — without it the radio
+enumerates but cannot be opened. `findSDDC` does `soapy_device["index"] =
+count;` where `count` is an `int` and `SoapySDR::Kwargs` is
+`map<string,string>`, so it selects `operator=(char)` and index 0 becomes a
+one-character string holding `'\0'` instead of `"0"`. SoapySDR merges the
+enumeration args into what it hands `makeSDDC`, which does
+`stoul(args.at("index"))`, and `stoul("\0")` throws. The caller cannot work
+around it — the enumeration value wins the merge whatever you pass as `index`.
+It surfaces as:
+
+```
+ERROR novasdr_server::dsp_runner: DSP loop terminated error=open SoapySDR device
+Caused by:
+    Other: stoul
+```
+
+Worth reporting upstream; this is also the likely reason `makeSDDC` carries the
+comment *"I don't know how it works, but here I need to choose the right
+device"*.
 
 ## Publishing
 
