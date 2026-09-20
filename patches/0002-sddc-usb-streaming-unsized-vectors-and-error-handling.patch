@@ -29,14 +29,30 @@ index 0cad431..de369a4 100644
  
      poll_thread = std::thread(
 diff --git a/Core/usb/streaming.cpp b/Core/usb/streaming.cpp
-index c90fd50..ec73165 100644
+index c90fd50..5040e04 100644
 --- a/Core/usb/streaming.cpp
 +++ b/Core/usb/streaming.cpp
-@@ -99,12 +99,34 @@ int USBDevice::streaming_open_async(uint32_t frame_size,
+@@ -99,12 +99,50 @@ int USBDevice::streaming_open_async(uint32_t frame_size,
      return -1;
    }
  
 -  /* allocate frames for zerocopy USB bulk transfers */
++  /* Size the vectors BEFORE indexing them.
++
++     transfers and transfer_buffers are std::vectors that nothing ever
++     resized or reserved, yet the loops below assign through
++     transfer_buffers[i] and transfers[i] for i in [0, num_frames). operator[]
++     on an empty vector is undefined behaviour: data() is null, so the very
++     first assignment dereferences a null pointer and the process dies inside
++     streaming_open_async() -- before it can return an error, which is why the
++     failure was a bare SIGSEGV with nothing on stderr.
++
++     This is the actual cause of "streaming segfaults immediately at every
++     sample rate, in both raw and IQ mode, while enumerate/open/configure all
++     work": those paths never touch these two vectors. */
++  transfers.resize(num_frames, nullptr);
++  transfer_buffers.resize(num_frames, nullptr);
++
 +  /* Allocate frames for USB bulk transfers.
 +
 +     libusb_dev_mem_alloc() is a zerocopy DMA optimisation, not a requirement:
@@ -71,7 +87,7 @@ index c90fd50..ec73165 100644
      #else
      transfer_buffers[i] = (uint8_t *) malloc(frame_size);
      #endif
-@@ -113,11 +135,12 @@ int USBDevice::streaming_open_async(uint32_t frame_size,
+@@ -113,11 +151,12 @@ int USBDevice::streaming_open_async(uint32_t frame_size,
        ErrorPrintln(TAG, "Failed to allocate streaming buffer");
        for (uint32_t j = 0; j < i; j++) {
          #ifdef __linux__
@@ -88,7 +104,7 @@ index c90fd50..ec73165 100644
          #endif
        }
        return -1;
-@@ -168,10 +191,10 @@ void USBDevice::streaming_close()
+@@ -168,10 +207,10 @@ void USBDevice::streaming_close()
    for(auto it = transfer_buffers.begin(); it != transfer_buffers.end();)
    {
      #ifdef __linux__
@@ -117,3 +133,34 @@ index 02a15c1..734c27b 100644
      streaming_t *streaming_obj = nullptr;
  
      StreamingStatus streaming_status;
+
+--
+Three fixes to the USB streaming path, in order of importance.
+
+1. transfers and transfer_buffers are std::vectors that nothing ever sized,
+   yet streaming_open_async() assigns through transfer_buffers[i] and
+   transfers[i]. operator[] on an empty vector is UB -- data() is null, so the
+   first assignment writes through a null pointer and the process dies inside
+   streaming_open_async(). THIS is the crash: immediate SIGSEGV at stream
+   start, at every sample rate, in both raw ADC and IQ mode, with nothing on
+   stderr, while enumerate/open/configure/probe all work because they never
+   touch these vectors.
+
+2. libusb_dev_mem_alloc() had no fallback on Linux (macOS and Windows get
+   malloc()). It is a zerocopy DMA optimisation -- an USBDEVFS_ALLOC_MEMORY
+   mmap on usbfs -- that is unavailable in plenty of ordinary environments and
+   returns NULL there. Now falls back to malloc() and records which allocator
+   was used, so streaming_close() and the error unwind free correctly; calling
+   libusb_dev_mem_free() on a malloc'd pointer would be its own bug.
+
+3. FX3handler::StartStream() discarded streaming_open_async()'s return value
+   and called streaming_start() regardless, which the author had documented
+   in place: "// FIXME: Will crash if streaming hasn't properly started".
+   It now reports and stays stopped, so any future open failure surfaces as a
+   message instead of a crash.
+
+Verified on an RX888 mk2 over SuperSpeed USB3 on Talos: before, sddc-cli
+listen segfaulted in both modes; usbcore.usbfs_memory_mb was 1000 and the
+kernel logged no USB errors, confirming a userspace fault.
+
+Worth reporting upstream: renardspark/SDDC_Driver.
