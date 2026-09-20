@@ -186,7 +186,7 @@ never push, and never log in. No secret setup is needed beyond the automatic
 `GITHUB_TOKEN`; the job requests `packages: write`.
 
 A GHCR package is private on first publish. This one has been made public —
-`ghcr.io/ramielrowe/novasdr-rx-888:git-a634872` pulls anonymously — so
+`ghcr.io/ramielrowe/novasdr-rx-888:git-dc97ce6` pulls anonymously — so
 `deploy/kubernetes.yaml` needs no `imagePullSecret`. If you republish under a
 different owner, either make the package public in the repo's *Packages*
 settings or add a pull secret to the Deployment.

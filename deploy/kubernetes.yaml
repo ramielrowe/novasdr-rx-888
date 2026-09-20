@@ -69,7 +69,7 @@ spec:
         # ConfigMap, not the running container. Overlay edits made through the
         # UI do not survive a restart -- that needs a PVC here instead.
         - name: seed-config
-          image: ghcr.io/ramielrowe/novasdr-rx-888:git-a634872
+          image: ghcr.io/ramielrowe/novasdr-rx-888:git-dc97ce6
           command:
             - sh
             - -c
@@ -91,7 +91,7 @@ spec:
           # reschedule takes the radio offline until it is noticed. `git-<sha>`
           # is published by .github/workflows for every push to main.
           # linux/amd64, verified against the published manifest.
-          image: ghcr.io/ramielrowe/novasdr-rx-888:git-a634872
+          image: ghcr.io/ramielrowe/novasdr-rx-888:git-dc97ce6
           env:
             - name: RUST_LOG
               value: info
